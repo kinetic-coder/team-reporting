@@ -70,12 +70,12 @@ while True:
         (issue["key"], 
          issue["fields"]["summary"], 
          issue["fields"]["customfield_10004"], # story points customfield_10004
-         issue["fields"]["status"]["name"],
-         'assignee',
-         issue["fields"]["reporter"]["name"],
-         issue["fields"]["created"],
-         issue["fields"]["updated"],
-         issue["fields"]["resolutiondate"]
+         issue["fields"]["status"]["name"], #status
+         'assignee', # assignee
+         issue["fields"]["reporter"]["name"], # reporter
+         issue["fields"]["created"], # created date
+         issue["fields"]["updated"], # updated date
+         issue["fields"]["resolutiondate"] # resolved date
         ) for issue in issues])
 
     # If the number of issues in the response is less than maxResults, we've retrieved all issues
@@ -94,8 +94,8 @@ cursor = conn.cursor()
 existingRecords = getAllIssues(cursor)
 print(f"There are currently {len(existingRecords)} existingRecords)")
 
-INSERT_SQL = """INSERT INTO Issue ([key], [Summary], [Status], [StoryPoints]) VALUES (?, ?, ?, ?)"""
-UPDATE_SQL = """UPDATE Issue SET [Summary] = ?, [Status] = ?, [StoryPoints] = ? WHERE [key] = ?"""
+INSERT_SQL = """INSERT INTO Issue ([key], [Summary], [Status], [StoryPoints], [Created], [Resolved]) VALUES (?, ?, ?, ?)"""
+UPDATE_SQL = """UPDATE Issue SET [Summary] = ?, [Status] = ?, [StoryPoints] = ?, [Created] = ?, [Resolved] = ? WHERE [key] = ?"""
 
 print("Storing data from Jira in the database...")
 print(f"{len(data_to_insert)} records to insert/update")
@@ -103,9 +103,9 @@ for data in data_to_insert:
     primaryKey = data[0]
 
     if(len(existingRecords) == 0 or primaryKey not in existingRecords):
-        cursor.execute(INSERT_SQL, (data[KEY_INDEX], data[SUMMARY_INDEX], data[STATUS_INDEX], data[STORYPOINTS_INDEX]))
+        cursor.execute(INSERT_SQL, (data[KEY_INDEX], data[SUMMARY_INDEX], data[STATUS_INDEX], data[STORYPOINTS_INDEX], data[CREATED_INDEX], data[RESOLUTIONDATE_INDEX]))
     else:
-        cursor.execute(UPDATE_SQL, (data[SUMMARY_INDEX], data[STATUS_INDEX], data[STORYPOINTS_INDEX], data[KEY_INDEX]))
+        cursor.execute(UPDATE_SQL, (data[SUMMARY_INDEX], data[STATUS_INDEX], data[STORYPOINTS_INDEX], data[KEY_INDEX], data[CREATED_INDEX], data[RESOLUTIONDATE_INDEX]))
 
 print("Comitting changes...")
 cursor.commit()

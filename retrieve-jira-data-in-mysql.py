@@ -24,6 +24,19 @@ def getAllIssues(cursor):
 
     return issues_dict
 
+########################################################################################
+# Constants 
+########################################################################################
+KEY_INDEX = 0
+SUMMARY_INDEX = 1
+STORYPOINTS_INDEX = 2
+STATUS_INDEX = 3
+ASSIGNEE_INDEX = 4
+REPORTER_INDEX = 5
+CREATED_INDEX = 6
+UPDATED_INDEX = 7
+RESOLUTIONDATE_INDEX = 8
+
 # Now you can use the secrets dictionary to access your secrets
 settings = Settings.get_settings('settings/secrets.json')
 
@@ -36,21 +49,34 @@ bearer_setting = f"Bearer {settings['jira-pak']}"
 
 # Initialize startAt and maxResults
 start_at = 0
-max_results = 50  # Adjust this value as needed
+max_results = 200  # Adjust this value as needed
 
 data_to_insert = []
 
+print(f"Retrieving data from Jira using the following query: {jql_query}")
 while True:
-    # Send a GET request to the Jira API
+    print(f"Retrieving data from Jira starting at {start_at}...")
+
+    # Send a GET request to the Jira API with a timeout of 10 seconds
     response = requests.get(
         jira_url,
         params={"jql": jql_query, "startAt": start_at, "maxResults": max_results},
         headers={"Authorization": bearer_setting, "Content-Type": "application/json"},
-    )
+        timeout=10)
 
     # Parse the response to get the desired data
     issues = response.json()["issues"]
-    data_to_insert.extend([(issue["key"], issue["fields"]["summary"], issue["fields"]["status"]["name"]) for issue in issues])
+    data_to_insert.extend([
+        (issue["key"], 
+         issue["fields"]["summary"], 
+         issue["fields"]["customfield_10004"], # story points customfield_10004
+         issue["fields"]["status"]["name"],
+         'assignee',
+         issue["fields"]["reporter"]["name"],
+         issue["fields"]["created"],
+         issue["fields"]["updated"],
+         issue["fields"]["resolutiondate"]
+        ) for issue in issues])
 
     # If the number of issues in the response is less than maxResults, we've retrieved all issues
     if len(issues) < max_results:
@@ -68,8 +94,8 @@ cursor = conn.cursor()
 existingRecords = getAllIssues(cursor)
 print(f"There are currently {len(existingRecords)} existingRecords)")
 
-insertSQL = """INSERT INTO Issue ([key], [Summary], [Status]) VALUES (?, ?, ?)"""
-updateSQL = """UPDATE Issue SET [Summary] = ?, [Status] = ? WHERE [key] = ?"""
+INSERT_SQL = """INSERT INTO Issue ([key], [Summary], [Status], [StoryPoints]) VALUES (?, ?, ?, ?)"""
+UPDATE_SQL = """UPDATE Issue SET [Summary] = ?, [Status] = ?, [StoryPoints] = ? WHERE [key] = ?"""
 
 print("Storing data from Jira in the database...")
 print(f"{len(data_to_insert)} records to insert/update")
@@ -77,12 +103,13 @@ for data in data_to_insert:
     primaryKey = data[0]
 
     if(len(existingRecords) == 0 or primaryKey not in existingRecords):
-        cursor.execute(insertSQL, (data[0], data[1], data[2]))
+        cursor.execute(INSERT_SQL, (data[KEY_INDEX], data[SUMMARY_INDEX], data[STATUS_INDEX], data[STORYPOINTS_INDEX]))
     else:
-        cursor.execute(updateSQL, (data[1], data[2], data[0]))
+        cursor.execute(UPDATE_SQL, (data[SUMMARY_INDEX], data[STATUS_INDEX], data[STORYPOINTS_INDEX], data[KEY_INDEX]))
 
 print("Comitting changes...")
 cursor.commit()
 
 print("Closing connection...")
 cursor.close()
+conn.close()

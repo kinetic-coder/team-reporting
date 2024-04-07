@@ -1,7 +1,28 @@
 import requests
-import mysql.connector
-import json
+import pyodbc
 import Utilities.Settings as Settings
+
+def recordExists(cursor, table, column, value):
+    cursor.execute(f"SELECT * FROM {table} WHERE {column} = ?", value)
+    return cursor.fetchone() is not None
+
+def executeQuery(cursor, query):
+    cursor.execute(query)
+
+def getAllIssues(cursor):
+    
+    cursor.execute("SELECT * FROM Issue")
+    rows = cursor.fetchall()
+
+    # Create a dictionary to store the rows
+    issues_dict = {}
+
+    # Loop through the rows and add them to the dictionary
+    for row in rows:
+        # Assuming the 'Key' column is the first column in the row
+        issues_dict[row[0]] = row[1:]
+
+    return issues_dict
 
 # Now you can use the secrets dictionary to access your secrets
 settings = Settings.get_settings('settings/secrets.json')
@@ -13,43 +34,55 @@ jql_query = settings["jira-query"]
 
 bearer_setting = f"Bearer {settings['jira-pak']}"
 
-# Send a GET request to the Jira API
-response = requests.get(
-    jira_url,
-    params={"jql": jql_query},
-    headers={"Authorization": bearer_setting, "Content-Type": "application/json"},
-)
+# Initialize startAt and maxResults
+start_at = 0
+max_results = 50  # Adjust this value as needed
 
-# Parse the response to get the desired data
-issues = response.json()["issues"]
-data_to_insert = [(issue["key"], issue["fields"]["labels"]) for issue in issues]
+data_to_insert = []
 
-# Connect to the MySQL database
-db = mysql.connector.connect(
-    host=settings["database-host"],
-    user=settings["database-user"],
-    password=settings["database-password"],
-    database=settings["database-name"],
-)
-
-# Create database if it does not exist...
-cursor = db.cursor()
-
-cursor.execute("CREATE DATABASE IF NOT EXISTS jira")
-cursor.execute(f"USE {settings['database-name']}")
-
-# Create a table (if not exists) to store the data
-cursor.execute("""
-    CREATE TABLE IF NOT EXISTS Issues (
-        key VARCHAR(255),
-        labels VARCHAR(255)
+while True:
+    # Send a GET request to the Jira API
+    response = requests.get(
+        jira_url,
+        params={"jql": jql_query, "startAt": start_at, "maxResults": max_results},
+        headers={"Authorization": bearer_setting, "Content-Type": "application/json"},
     )
-""")
 
-# Insert the data into the table
+    # Parse the response to get the desired data
+    issues = response.json()["issues"]
+    data_to_insert.extend([(issue["key"], issue["fields"]["summary"], issue["fields"]["status"]["name"]) for issue in issues])
+
+    # If the number of issues in the response is less than maxResults, we've retrieved all issues
+    if len(issues) < max_results:
+        break
+
+    # Otherwise, increment startAt by maxResults for the next iteration
+    start_at += max_results
+
+# Connect to the SQL Server database
+conn = pyodbc.connect(settings['sql-connection-string'])
+
+# Create a cursor
+cursor = conn.cursor()
+
+existingRecords = getAllIssues(cursor)
+print(f"There are currently {len(existingRecords)} existingRecords)")
+
+insertSQL = """INSERT INTO Issue ([key], [Summary], [Status]) VALUES (?, ?, ?)"""
+updateSQL = """UPDATE Issue SET [Summary] = ?, [Status] = ? WHERE [key] = ?"""
+
+print("Storing data from Jira in the database...")
+print(f"{len(data_to_insert)} records to insert/update")
 for data in data_to_insert:
-    cursor.execute("INSERT INTO Issues (key, labels) VALUES (%s, %s)", data)
+    primaryKey = data[0]
 
-# Commit the changes and close the connection
-db.commit()
-db.close()
+    if(len(existingRecords) == 0 or primaryKey not in existingRecords):
+        cursor.execute(insertSQL, (data[0], data[1], data[2]))
+    else:
+        cursor.execute(updateSQL, (data[1], data[2], data[0]))
+
+print("Comitting changes...")
+cursor.commit()
+
+print("Closing connection...")
+cursor.close()
